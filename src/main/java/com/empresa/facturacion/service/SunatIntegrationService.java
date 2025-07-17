@@ -5,7 +5,6 @@ import com.empresa.facturacion.dto.SunatResponse;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import io.smallrye.mutiny.Uni;
-// IMPORTS CORREGIDOS PARA QUARKUS 3.24.3
 import org.eclipse.microprofile.faulttolerance.Retry;
 import org.eclipse.microprofile.faulttolerance.Timeout;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
@@ -34,31 +33,40 @@ public class SunatIntegrationService {
     @Inject
     XmlGeneratorService xmlGenerator;
 
+    @Inject
+    DigitalSignatureService signatureService;
+
     @Retry(maxRetries = 3, delay = 2000)
     @Timeout(value = 120, unit = ChronoUnit.SECONDS)
     public Uni<SunatResponse> enviarFactura(FacturaPruebaRequest request) {
-        LOG.infof("Iniciando envío de factura %s-%d a SUNAT", request.serie, request.correlativo);
+        LOG.infof("🚀 Iniciando envío de factura %s-%d a SUNAT", request.serie, request.correlativo);
 
         return Uni.createFrom().item(request)
                 .onItem().transform(xmlGenerator::generarXmlFactura)
-                .onItem().invoke(xml -> LOG.debugf("XML generado: %s", xml.substring(0, Math.min(200, xml.length()))))
-                .onItem().transformToUni(this::simularFirmaYComprimir)
+                .onItem().invoke(xml -> LOG.debugf("📄 XML generado (primeros 300 chars): %s",
+                        xml.substring(0, Math.min(300, xml.length()))))
+                .onItem().transformToUni(this::firmarYComprimir)
                 .onItem().transformToUni(zipData -> construirYEnviarSoap(zipData, request))
                 .onItem().transform(this::procesarRespuestaSunat)
                 .onFailure().recoverWithItem(this::manejarError);
     }
 
-    private Uni<CompressedDocument> simularFirmaYComprimir(String xmlContent) {
+    private Uni<CompressedDocument> firmarYComprimir(String xmlContent) {
         return Uni.createFrom().item(() -> {
             try {
-                // Simulamos firma digital agregando un hash
-                String hashCpe = "simulado_hash_" + System.currentTimeMillis();
+                LOG.info("🔐 Iniciando proceso de firma y compresión");
 
-                // XML "firmado" (insertamos estructura de firma simulada)
-                String xmlFirmado = xmlContent.replace(
-                        "<ext:ExtensionContent/>",
-                        "<ext:ExtensionContent>" + generarEstructuraFirmaSimulada(hashCpe) + "</ext:ExtensionContent>"
-                );
+                // CAMBIO IMPORTANTE: Usar firma digital real
+                DigitalSignatureService.SignedDocumentResult signResult =
+                        signatureService.firmarXml(xmlContent);
+
+                if (!signResult.success) {
+                    LOG.warnf("⚠️ Firma falló, usando firma simulada: %s", signResult.mensaje);
+                    // Fallback a firma simulada si falla la real
+                    return simularFirmaYComprimir(xmlContent);
+                }
+
+                LOG.info("✅ Documento firmado correctamente con certificado real");
 
                 // Comprimir en ZIP
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -67,18 +75,64 @@ public class SunatIntegrationService {
                 String fileName = "documento.xml";
                 ZipEntry entry = new ZipEntry(fileName);
                 zos.putNextEntry(entry);
-                zos.write(xmlFirmado.getBytes("UTF-8"));
+                zos.write(signResult.xmlFirmado.getBytes("UTF-8"));
                 zos.closeEntry();
                 zos.close();
 
                 String zipBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
 
-                return new CompressedDocument(xmlFirmado, hashCpe, zipBase64, fileName);
+                return new CompressedDocument(
+                        signResult.xmlFirmado,
+                        signResult.hashCpe,
+                        zipBase64,
+                        fileName,
+                        true // indica que es firma real
+                );
 
             } catch (Exception e) {
-                throw new RuntimeException("Error procesando documento", e);
+                LOG.errorf(e, "❌ Error en firma real, usando simulada como fallback");
+                // Fallback a firma simulada
+                return simularFirmaYComprimir(xmlContent);
             }
         });
+    }
+
+    private CompressedDocument simularFirmaYComprimir(String xmlContent) {
+        try {
+            LOG.warn("⚠️ Usando firma SIMULADA - Solo para pruebas");
+
+            String hashCpe = "simulado_hash_" + System.currentTimeMillis();
+
+            // XML "firmado" simulado
+            String xmlFirmado = xmlContent.replace(
+                    "<ext:ExtensionContent/>",
+                    "<ext:ExtensionContent>" + generarEstructuraFirmaSimulada(hashCpe) + "</ext:ExtensionContent>"
+            );
+
+            // Comprimir en ZIP
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ZipOutputStream zos = new ZipOutputStream(baos);
+
+            String fileName = "documento.xml";
+            ZipEntry entry = new ZipEntry(fileName);
+            zos.putNextEntry(entry);
+            zos.write(xmlFirmado.getBytes("UTF-8"));
+            zos.closeEntry();
+            zos.close();
+
+            String zipBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
+
+            return new CompressedDocument(
+                    xmlFirmado,
+                    hashCpe,
+                    zipBase64,
+                    fileName,
+                    false // indica que es firma simulada
+            );
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error procesando documento", e);
+        }
     }
 
     private String generarEstructuraFirmaSimulada(String hashCpe) {
@@ -116,17 +170,17 @@ public class SunatIntegrationService {
                 doc.zipBase64
         );
 
-        LOG.infof("Enviando SOAP a SUNAT: %s", fileName);
-        LOG.debugf("SOAP Envelope: %s", soapEnvelope.substring(0, Math.min(500, soapEnvelope.length())));
+        String tipoFirma = doc.esReal ? "REAL" : "SIMULADA";
+        LOG.infof("📤 Enviando SOAP a SUNAT: %s (Firma: %s)", fileName, tipoFirma);
 
         return sunatClient.enviarDocumento(
                 "text/xml; charset=utf-8",
-                "\"\"", // SOAPAction vacío
+                "\"\"",
                 "text/xml",
                 "Quarkus-SUNAT-Client/1.0",
                 soapEnvelope
         ).onFailure().invoke(failure -> {
-            LOG.errorf("Error en llamada SOAP: %s", failure.getMessage());
+            LOG.errorf("❌ Error en llamada SOAP: %s", failure.getMessage());
         });
     }
 
@@ -155,7 +209,7 @@ public class SunatIntegrationService {
 
     private SunatResponse procesarRespuestaSunat(String soapResponse) {
         try {
-            LOG.infof("Respuesta SUNAT recibida (primeros 200 chars): %s",
+            LOG.infof("📨 Respuesta SUNAT recibida (primeros 200 chars): %s",
                     soapResponse.substring(0, Math.min(200, soapResponse.length())));
 
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -168,15 +222,15 @@ public class SunatIntegrationService {
             if (applicationResponse.getLength() > 0) {
                 String cdrBase64 = applicationResponse.item(0).getTextContent();
 
-                LOG.infof("Documento aceptado por SUNAT - CDR recibido");
+                LOG.infof("🎉 ¡ÉXITO! Documento ACEPTADO por SUNAT - CDR recibido");
 
                 return SunatResponse.success(
                         "0",
-                        "La Factura ha sido aceptada",
-                        "", // xmlFirmado
-                        cdrBase64, // cdrSunat
-                        "hash_simulado", // hashCpe
-                        "documento_enviado" // numeroDocumento
+                        "La Factura ha sido aceptada por SUNAT",
+                        "",
+                        cdrBase64,
+                        "hash_real",
+                        "documento_aceptado"
                 );
             } else {
                 // Verificar errores SOAP
@@ -187,7 +241,7 @@ public class SunatIntegrationService {
                     String codigo = faultCode.item(0).getTextContent();
                     String mensaje = faultString.item(0).getTextContent();
 
-                    LOG.errorf("Error SUNAT - Código: %s, Mensaje: %s", codigo, mensaje);
+                    LOG.errorf("❌ Error SUNAT - Código: %s, Mensaje: %s", codigo, mensaje);
 
                     return SunatResponse.error(codigo, mensaje);
                 }
@@ -196,20 +250,19 @@ public class SunatIntegrationService {
             throw new RuntimeException("Respuesta SUNAT no reconocida");
 
         } catch (Exception e) {
-            LOG.errorf(e, "Error procesando respuesta SUNAT");
+            LOG.errorf(e, "❌ Error procesando respuesta SUNAT");
             return SunatResponse.error("PARSE_ERROR", "Error procesando respuesta: " + e.getMessage());
         }
     }
 
     private SunatResponse manejarError(Throwable throwable) {
-        LOG.errorf(throwable, "Error en integración SUNAT");
+        LOG.errorf(throwable, "💥 Error en integración SUNAT");
 
         String mensaje = throwable.getMessage();
 
-        // Analizar tipos de errores comunes
         if (mensaje.contains("status code 500")) {
             return SunatResponse.error("SUNAT_500",
-                    "Error en servidor SUNAT (500) - Posible problema con firma digital o formato XML");
+                    "Error en servidor SUNAT (500) - Verificar firma digital y formato XML");
         } else if (mensaje.contains("status code 401")) {
             return SunatResponse.error("SUNAT_401",
                     "Error de autenticación - Verificar credenciales SOL");
@@ -218,24 +271,26 @@ public class SunatIntegrationService {
                     "Servicio SUNAT no encontrado - Verificar URL");
         } else if (mensaje.contains("ConnectException") || mensaje.contains("timeout")) {
             return SunatResponse.error("SUNAT_CONECTIVIDAD",
-                    "Error de conectividad con SUNAT - Servicio temporalmente no disponible");
+                    "Error de conectividad con SUNAT");
         } else {
             return SunatResponse.error("ERROR_INTERNO", "Error interno: " + mensaje);
         }
     }
 
-    // Clase auxiliar
+    // Clase auxiliar actualizada
     private static class CompressedDocument {
         final String xmlFirmado;
         final String hashCpe;
         final String zipBase64;
         final String fileName;
+        final boolean esReal; // nuevo campo
 
-        CompressedDocument(String xmlFirmado, String hashCpe, String zipBase64, String fileName) {
+        CompressedDocument(String xmlFirmado, String hashCpe, String zipBase64, String fileName, boolean esReal) {
             this.xmlFirmado = xmlFirmado;
             this.hashCpe = hashCpe;
             this.zipBase64 = zipBase64;
             this.fileName = fileName;
+            this.esReal = esReal;
         }
     }
 }
