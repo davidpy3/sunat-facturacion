@@ -36,20 +36,22 @@ public class FacturaPruebaRequest {
     public List<ItemDto> items;
 
     public static class EmisorDto {
-        public String ruc = "20000000001"; // RUC de prueba SUNAT
+        // ✅ CAMBIO: Ya no usar datos hardcodeados de prueba
+        // Estos valores ahora se llenarán desde la configuración
+        public String ruc;
         @JsonProperty("razon_social")
-        public String razonSocial = "EMPRESA DE PRUEBA SAC";
+        public String razonSocial;
         @JsonProperty("nombre_comercial")
-        public String nombreComercial = "EMPRESA PRUEBA";
-        public String direccion = "AV. PRUEBA 123 - LIMA - LIMA - LIMA";
-        public String ubigeo = "150101";
-        public String departamento = "LIMA";
-        public String provincia = "LIMA";
-        public String distrito = "LIMA";
+        public String nombreComercial;
+        public String direccion;
+        public String ubigeo;
+        public String departamento;
+        public String provincia;
+        public String distrito;
         @JsonProperty("usuario_sol")
-        public String usuarioSol = "MODDATOS";
+        public String usuarioSol;
         @JsonProperty("clave_sol")
-        public String claveSol = "MODDATOS";
+        public String claveSol;
     }
 
     public static class ClienteDto {

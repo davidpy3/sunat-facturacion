@@ -1,5 +1,6 @@
 package com.empresa.facturacion.resource;
 
+import com.empresa.facturacion.config.EmisorConfig;
 import com.empresa.facturacion.dto.FacturaPruebaRequest;
 import com.empresa.facturacion.service.SunatIntegrationService;
 import jakarta.inject.Inject;
@@ -20,6 +21,10 @@ public class FacturacionResource {
 
     @Inject
     SunatIntegrationService sunatService;
+
+    // ✅ CAMBIO: Inyectar configuración del emisor real
+    @Inject
+    EmisorConfig emisorConfig;
 
     @GET
     @Path("/health")
@@ -44,19 +49,19 @@ public class FacturacionResource {
     @GET
     @Path("/datos-prueba")
     public Response obtenerDatosPrueba() {
-        // Datos de prueba oficiales de SUNAT
+        // ✅ CAMBIO: Usar datos reales de configuración en lugar de hardcodeados
         return Response.ok(Map.of(
                 "emisor", Map.of(
-                        "ruc", "20000000001",
-                        "razon_social", "EMPRESA DE PRUEBA SAC",
-                        "nombre_comercial", "EMPRESA PRUEBA",
-                        "direccion", "AV. PRUEBA 123 - LIMA - LIMA - LIMA",
-                        "ubigeo", "150101",
-                        "departamento", "LIMA",
-                        "provincia", "LIMA",
-                        "distrito", "LIMA",
-                        "usuario_sol", "MODDATOS",
-                        "clave_sol", "MODDATOS"
+                        "ruc", emisorConfig.ruc(),
+                        "razon_social", emisorConfig.razonSocial(),
+                        "nombre_comercial", emisorConfig.nombreComercial(),
+                        "direccion", emisorConfig.direccion(),
+                        "ubigeo", emisorConfig.ubigeo(),
+                        "departamento", emisorConfig.departamento(),
+                        "provincia", emisorConfig.provincia(),
+                        "distrito", emisorConfig.distrito(),
+                        "usuario_sol", emisorConfig.usuarioSol(),
+                        "clave_sol", emisorConfig.claveSol()
                 ),
                 "cliente", Map.of(
                         "tipo_documento", "6",
