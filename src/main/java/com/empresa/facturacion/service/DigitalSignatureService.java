@@ -1,6 +1,9 @@
 package com.empresa.facturacion.service;
 
+import com.empresa.facturacion.config.CertificadosConfig;
+import com.empresa.facturacion.config.CertificadoConfig;
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -35,26 +38,39 @@ public class DigitalSignatureService {
 
     private static final Logger LOG = Logger.getLogger(DigitalSignatureService.class);
 
-    private static final String CERTIFICADO_PATH = "src/main/resources/certificates/certificado_factura.pfx";
-    private static final String CERTIFICADO_PASSWORD = "factura2025";
+    @Inject
+    CertificadosConfig certificadosConfig;
+
+    @Inject
+    CertificadoConfig certificadoConfig;    // ← singular
 
     public SignedDocumentResult firmarXml(String xmlContent) {
         try {
             LOG.info("🔐 Iniciando proceso de firma digital");
 
+            // Construir ruta del certificado desde configuración
+            String certificadoPath = certificadosConfig.path() + certificadoConfig.nombre();
+            String certificadoPassword = certificadoConfig.password();
+
+            LOG.infof("📂 Configuración de certificado:");
+            LOG.infof("   Ruta base: %s", certificadosConfig.path());
+            LOG.infof("   Nombre archivo: %s", certificadoConfig.nombre());
+            LOG.infof("   Ruta completa: %s", certificadoPath);
+            LOG.infof("   Password: %s***", certificadoPassword.substring(0, Math.min(3, certificadoPassword.length())));
+
             // Verificar que el archivo existe
-            File certFile = new File(CERTIFICADO_PATH);
+            File certFile = new File(certificadoPath);
             if (!certFile.exists()) {
-                LOG.errorf("❌ Certificado no encontrado en: %s", CERTIFICADO_PATH);
+                LOG.errorf("❌ Certificado no encontrado en: %s", certificadoPath);
                 return new SignedDocumentResult(xmlContent, "", false,
-                        "Certificado no encontrado en: " + CERTIFICADO_PATH);
+                        "Certificado no encontrado en: " + certificadoPath);
             }
 
             LOG.infof("📂 Certificado encontrado: %s (tamaño: %d bytes)",
-                    CERTIFICADO_PATH, certFile.length());
+                    certificadoPath, certFile.length());
 
             // 1. Cargar certificado digital
-            CertificateInfo certInfo = cargarCertificado();
+            CertificateInfo certInfo = cargarCertificado(certificadoPath, certificadoPassword);
 
             // 2. Parsear XML
             Document doc = parsearXml(xmlContent);
@@ -78,14 +94,14 @@ public class DigitalSignatureService {
         }
     }
 
-    private CertificateInfo cargarCertificado() throws Exception {
+    private CertificateInfo cargarCertificado(String certificadoPath, String certificadoPassword) throws Exception {
         LOG.info("📜 Cargando certificado digital");
 
         try {
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
 
-            try (FileInputStream fis = new FileInputStream(CERTIFICADO_PATH)) {
-                keyStore.load(fis, CERTIFICADO_PASSWORD.toCharArray());
+            try (FileInputStream fis = new FileInputStream(certificadoPath)) {
+                keyStore.load(fis, certificadoPassword.toCharArray());
             }
 
             // Listar aliases disponibles
@@ -100,7 +116,7 @@ public class DigitalSignatureService {
                 throw new Exception("No se encontraron aliases en el certificado");
             }
 
-            PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, CERTIFICADO_PASSWORD.toCharArray());
+            PrivateKey privateKey = (PrivateKey) keyStore.getKey(alias, certificadoPassword.toCharArray());
             X509Certificate certificate = (X509Certificate) keyStore.getCertificate(alias);
 
             if (privateKey == null) {

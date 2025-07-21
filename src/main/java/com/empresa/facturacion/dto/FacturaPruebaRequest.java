@@ -9,9 +9,9 @@ import java.util.List;
 
 public class FacturaPruebaRequest {
 
-    @NotNull
+    // ✅ CAMBIO: Quitar @NotNull porque ahora se llena desde configuración
     @JsonProperty("emisor")
-    public EmisorDto emisor;
+    public EmisorDto emisor = new EmisorDto(); // Inicializar con objeto vacío
 
     @NotNull
     @JsonProperty("cliente")
@@ -36,22 +36,21 @@ public class FacturaPruebaRequest {
     public List<ItemDto> items;
 
     public static class EmisorDto {
-        // ✅ CAMBIO: Ya no usar datos hardcodeados de prueba
-        // Estos valores ahora se llenarán desde la configuración
-        public String ruc;
+        // ✅ Estos valores se sobrescriben desde la configuración
+        public String ruc = "";
         @JsonProperty("razon_social")
-        public String razonSocial;
+        public String razonSocial = "";
         @JsonProperty("nombre_comercial")
-        public String nombreComercial;
-        public String direccion;
-        public String ubigeo;
-        public String departamento;
-        public String provincia;
-        public String distrito;
+        public String nombreComercial = "";
+        public String direccion = "";
+        public String ubigeo = "";
+        public String departamento = "";
+        public String provincia = "";
+        public String distrito = "";
         @JsonProperty("usuario_sol")
-        public String usuarioSol;
+        public String usuarioSol = "";
         @JsonProperty("clave_sol")
-        public String claveSol;
+        public String claveSol = "";
     }
 
     public static class ClienteDto {

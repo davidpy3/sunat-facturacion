@@ -25,17 +25,3 @@ public interface EmisorConfig {
     String usuarioSol(); // Mapea empresa.usuario_sol
     String claveSol();   // Mapea empresa.clave_sol
 }
-
-/**
- * 🔐 CONFIGURACIÓN DEL CERTIFICADO DIGITAL
- */
-@ConfigMapping(prefix = "certificados")
-interface CertificadoConfig {
-    String path();
-}
-
-@ConfigMapping(prefix = "certificado")
-interface CertificadoDetalleConfig {
-    String nombre();
-    String password();
-}

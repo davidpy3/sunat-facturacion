@@ -16,6 +16,9 @@ import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.zip.ZipEntry;
@@ -68,16 +71,44 @@ public class SunatIntegrationService {
 
                 LOG.info("✅ Documento firmado correctamente con certificado real");
 
-                // Comprimir en ZIP
+                // 🗂️ NUEVO: Crear directorio para almacenar archivos
+                String outputDir = "output/facturas";
+                File dir = new File(outputDir);
+                if (!dir.exists()) {
+                    dir.mkdirs();
+                    LOG.infof("📁 Directorio creado: %s", outputDir);
+                }
+
+                // 🗂️ NUEVO: Generar nombres de archivos con timestamp
+                String timestamp = java.time.LocalDateTime.now().format(
+                        java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+                String xmlFileName = String.format("factura_%s.xml", timestamp);
+                String zipFileName = String.format("factura_%s.zip", timestamp);
+
+                // 💾 NUEVO: Guardar XML firmado
+                String xmlFilePath = outputDir + "/" + xmlFileName;
+                try (FileWriter writer = new FileWriter(xmlFilePath)) {
+                    writer.write(signResult.xmlFirmado);
+                }
+                LOG.infof("💾 XML firmado guardado: %s", xmlFilePath);
+
+                // Comprimir en ZIP (en memoria)
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 ZipOutputStream zos = new ZipOutputStream(baos);
 
-                String fileName = "documento.xml";
-                ZipEntry entry = new ZipEntry(fileName);
+                String zipEntryName = "documento.xml";
+                ZipEntry entry = new ZipEntry(zipEntryName);
                 zos.putNextEntry(entry);
                 zos.write(signResult.xmlFirmado.getBytes("UTF-8"));
                 zos.closeEntry();
                 zos.close();
+
+                // 💾 NUEVO: Guardar ZIP también en disco
+                String zipFilePath = outputDir + "/" + zipFileName;
+                try (FileOutputStream fos = new FileOutputStream(zipFilePath)) {
+                    fos.write(baos.toByteArray());
+                }
+                LOG.infof("💾 ZIP guardado: %s (tamaño: %d bytes)", zipFilePath, baos.size());
 
                 String zipBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
 
@@ -85,8 +116,10 @@ public class SunatIntegrationService {
                         signResult.xmlFirmado,
                         signResult.hashCpe,
                         zipBase64,
-                        fileName,
-                        true // indica que es firma real
+                        zipEntryName,
+                        true, // indica que es firma real
+                        xmlFilePath, // 🗂️ NUEVO: ruta del XML
+                        zipFilePath  // 🗂️ NUEVO: ruta del ZIP
                 );
 
             } catch (Exception e) {
@@ -109,16 +142,41 @@ public class SunatIntegrationService {
                     "<ext:ExtensionContent>" + generarEstructuraFirmaSimulada(hashCpe) + "</ext:ExtensionContent>"
             );
 
+            // 🗂️ NUEVO: Crear directorio y guardar archivos simulados también
+            String outputDir = "output/facturas";
+            File dir = new File(outputDir);
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+
+            String timestamp = java.time.LocalDateTime.now().format(
+                    java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+            String xmlFileName = String.format("factura_SIMULADA_%s.xml", timestamp);
+            String zipFileName = String.format("factura_SIMULADA_%s.zip", timestamp);
+
+            // 💾 Guardar XML simulado
+            String xmlFilePath = outputDir + "/" + xmlFileName;
+            try (FileWriter writer = new FileWriter(xmlFilePath)) {
+                writer.write(xmlFirmado);
+            }
+
             // Comprimir en ZIP
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ZipOutputStream zos = new ZipOutputStream(baos);
 
-            String fileName = "documento.xml";
-            ZipEntry entry = new ZipEntry(fileName);
+            String zipEntryName = "documento.xml";
+            ZipEntry entry = new ZipEntry(zipEntryName);
             zos.putNextEntry(entry);
             zos.write(xmlFirmado.getBytes("UTF-8"));
             zos.closeEntry();
             zos.close();
+
+            // 💾 Guardar ZIP simulado
+            String zipFilePath = outputDir + "/" + zipFileName;
+            try (FileOutputStream fos = new FileOutputStream(zipFilePath)) {
+                fos.write(baos.toByteArray());
+            }
+            LOG.infof("💾 Archivos SIMULADOS guardados: XML=%s, ZIP=%s", xmlFilePath, zipFilePath);
 
             String zipBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
 
@@ -126,8 +184,10 @@ public class SunatIntegrationService {
                     xmlFirmado,
                     hashCpe,
                     zipBase64,
-                    fileName,
-                    false // indica que es firma simulada
+                    zipEntryName,
+                    false, // indica que es firma simulada
+                    xmlFilePath,
+                    zipFilePath
             );
 
         } catch (Exception e) {
@@ -163,15 +223,21 @@ public class SunatIntegrationService {
         String numeroDocumento = request.serie + "-" + request.correlativo;
         String fileName = request.emisor.ruc + "-01-" + numeroDocumento + ".ZIP";
 
-        String soapEnvelope = construirSoapEnvelope(
-                request.emisor.ruc + request.emisor.usuarioSol,
-                request.emisor.claveSol,
-                fileName,
-                doc.zipBase64
-        );
+        String username = request.emisor.ruc + request.emisor.usuarioSol;
+        String password = request.emisor.claveSol;
+
+        // LOG DETALLADO DE CREDENCIALES
+        LOG.infof("🔐 Credenciales SOL a enviar:");
+        LOG.infof("   RUC: %s", request.emisor.ruc);
+        LOG.infof("   Usuario secundario: %s", request.emisor.usuarioSol);
+        LOG.infof("   Usuario SOL completo: %s", username);
+        LOG.infof("   Clave SOL: %s***", password.substring(0, Math.min(3, password.length())));
+
+        String soapEnvelope = construirSoapEnvelope(username, password, fileName, doc.zipBase64);
 
         String tipoFirma = doc.esReal ? "REAL" : "SIMULADA";
         LOG.infof("📤 Enviando SOAP a SUNAT: %s (Firma: %s)", fileName, tipoFirma);
+        LOG.infof("📂 Archivos locales: XML=%s, ZIP=%s", doc.xmlFilePath, doc.zipFilePath);
 
         return sunatClient.enviarDocumento(
                 "text/xml; charset=utf-8",
@@ -181,6 +247,27 @@ public class SunatIntegrationService {
                 soapEnvelope
         ).onFailure().invoke(failure -> {
             LOG.errorf("❌ Error en llamada SOAP: %s", failure.getMessage());
+
+            // NUEVO: Intentar obtener más detalles del error
+            if (failure instanceof jakarta.ws.rs.WebApplicationException) {
+                jakarta.ws.rs.WebApplicationException webEx = (jakarta.ws.rs.WebApplicationException) failure;
+
+                LOG.errorf("🚨 Detalles del error SUNAT:");
+                LOG.errorf("   Status Code: %d", webEx.getResponse().getStatus());
+
+                try {
+                    String responseBody = webEx.getResponse().readEntity(String.class);
+                    LOG.errorf("   Response Body: %s", responseBody.substring(0, Math.min(500, responseBody.length())));
+                } catch (Exception e) {
+                    LOG.errorf("   No se pudo leer el cuerpo de la respuesta: %s", e.getMessage());
+                }
+            }
+
+            LOG.error("🚨 Error 500 detectado - Posibles causas:");
+            LOG.error("   1. Servidor SUNAT BETA temporalmente inestable");
+            LOG.error("   2. RUC no habilitado para facturación electrónica");
+            LOG.error("   3. Certificado no autorizado en SUNAT");
+            LOG.error("   4. Formato XML no completamente compatible");
         });
     }
 
@@ -260,37 +347,62 @@ public class SunatIntegrationService {
 
         String mensaje = throwable.getMessage();
 
+        // Analizar el mensaje de error más detalladamente
         if (mensaje.contains("status code 500")) {
+
+            // Verificar si es error de autenticación dentro del 500
+            if (mensaje.contains("Authentication") || mensaje.contains("Usuario") ||
+                    mensaje.contains("Password") || mensaje.contains("Unauthorized")) {
+
+                return SunatResponse.error("SUNAT_AUTH_500",
+                        "Error 500 - Posible problema de autenticación. Verificar credenciales SOL (RUC + Usuario Secundario)");
+            }
+
+            // Verificar si es error de firma
+            if (mensaje.contains("Signature") || mensaje.contains("Certificate") ||
+                    mensaje.contains("xmldsig")) {
+
+                return SunatResponse.error("SUNAT_SIGNATURE_500",
+                        "Error 500 - Problema con firma digital o certificado");
+            }
+
+            // Error 500 genérico
             return SunatResponse.error("SUNAT_500",
-                    "Error en servidor SUNAT (500) - Verificar firma digital y formato XML");
+                    "Error 500 - Verificar: 1) Credenciales SOL correctas 2) Permisos de facturación 3) Firma digital válida");
+
         } else if (mensaje.contains("status code 401")) {
             return SunatResponse.error("SUNAT_401",
-                    "Error de autenticación - Verificar credenciales SOL");
+                    "Error 401 - Credenciales SOL incorrectas. Verificar RUC + Usuario Secundario + Clave");
         } else if (mensaje.contains("status code 404")) {
             return SunatResponse.error("SUNAT_404",
-                    "Servicio SUNAT no encontrado - Verificar URL");
+                    "Error 404 - Servicio SUNAT no encontrado. Verificar URL del ambiente BETA");
         } else if (mensaje.contains("ConnectException") || mensaje.contains("timeout")) {
             return SunatResponse.error("SUNAT_CONECTIVIDAD",
-                    "Error de conectividad con SUNAT");
+                    "Error de conectividad - SUNAT temporalmente no disponible");
         } else {
             return SunatResponse.error("ERROR_INTERNO", "Error interno: " + mensaje);
         }
     }
 
-    // Clase auxiliar actualizada
+    // 🗂️ NUEVO: Clase auxiliar actualizada con rutas de archivos
     private static class CompressedDocument {
         final String xmlFirmado;
         final String hashCpe;
         final String zipBase64;
         final String fileName;
-        final boolean esReal; // nuevo campo
+        final boolean esReal;
+        final String xmlFilePath; // 🗂️ NUEVO
+        final String zipFilePath; // 🗂️ NUEVO
 
-        CompressedDocument(String xmlFirmado, String hashCpe, String zipBase64, String fileName, boolean esReal) {
+        CompressedDocument(String xmlFirmado, String hashCpe, String zipBase64, String fileName,
+                           boolean esReal, String xmlFilePath, String zipFilePath) {
             this.xmlFirmado = xmlFirmado;
             this.hashCpe = hashCpe;
             this.zipBase64 = zipBase64;
             this.fileName = fileName;
             this.esReal = esReal;
+            this.xmlFilePath = xmlFilePath;
+            this.zipFilePath = zipFilePath;
         }
     }
 }

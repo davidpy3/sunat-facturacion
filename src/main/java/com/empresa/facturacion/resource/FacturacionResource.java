@@ -93,6 +93,22 @@ public class FacturacionResource {
     public Uni<Response> pruebaFactura(@Valid FacturaPruebaRequest request) {
         LOG.infof("🚀 Recibida solicitud de prueba factura: %s-%d", request.serie, request.correlativo);
 
+        // ✅ MEJORA: Usar datos de configuración en lugar del JSON
+        // Sobrescribir datos del emisor con los del application.properties
+        request.emisor.ruc = emisorConfig.ruc();
+        request.emisor.razonSocial = emisorConfig.razonSocial();
+        request.emisor.nombreComercial = emisorConfig.nombreComercial();
+        request.emisor.direccion = emisorConfig.direccion();
+        request.emisor.ubigeo = emisorConfig.ubigeo();
+        request.emisor.departamento = emisorConfig.departamento();
+        request.emisor.provincia = emisorConfig.provincia();
+        request.emisor.distrito = emisorConfig.distrito();
+        request.emisor.usuarioSol = emisorConfig.usuarioSol();
+        request.emisor.claveSol = emisorConfig.claveSol();
+
+        LOG.infof("📋 Usando datos de configuración: RUC=%s, Usuario=%s",
+                request.emisor.ruc, request.emisor.usuarioSol);
+
         return sunatService.enviarFactura(request)
                 .onItem().transform(result -> {
                     if (result.success) {
